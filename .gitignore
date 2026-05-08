@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+build/
+dist/
+
+# uv / virtualenv
+.venv/
+venv/
+.python-version
+
+# Editores / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
