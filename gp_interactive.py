@@ -16,6 +16,21 @@ Uso:
   - Click derecho (o Shift+click izquierdo):
         agrega una observación arbitraria en (x, y) = posición del clic
         (también con incerteza σ_n en y).
+  - Botón "Exploración":
+        agrega un punto en el x donde la varianza posterior es máxima
+        (estrategia de exploración pura).
+  - Botón "Explotación":
+        agrega un punto en el x donde la media posterior es máxima
+        (estrategia greedy: candidato a maximizar g(x)).
+  - Botón "UCB":
+        agrega un punto en argmax(μ(x) + β·σ(x)). El slider β controla
+        el balance entre explotación (β bajo) y exploración (β alto).
+  - Botón "EI" (Expected Improvement):
+        agrega un punto en argmax E[max(0, f(x) - f*)], donde f* es el
+        mejor y observado. Balancea explotación/exploración sin hiperparámetro
+        y naturalmente evita re-muestrear donde σ(x) ya es chica.
+  - Botón "Regenerar g(x)":
+        sortea una nueva función real bimodal y limpia las observaciones.
   - Sliders:
         σ_n  -> incerteza de la próxima observación (afecta solo nuevos puntos).
         ℓ    -> escala de longitud del kernel.
@@ -30,16 +45,42 @@ con menor opacidad (las más viejas se desvanecen).
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons, Button
+from scipy.stats import norm
 
 
 # ===========================================================
 # Función real (oculta para el GP, mostrada como referencia)
-# Bimodal: dos gaussianas con amplitudes distintas (moda izq. > moda der.)
+# Bimodal aleatoria: dos gaussianas con amplitudes distintas
+# (una moda claramente mayor que la otra).
 # ===========================================================
-def g(x):
-    peak_high = 2.2 * np.exp(-0.5 * ((x - (-1.5)) / 0.7) ** 2)  # moda mayor
-    peak_low = 1.0 * np.exp(-0.5 * ((x - 2.0) / 0.9) ** 2)       # moda menor
-    return peak_high + peak_low
+RNG = np.random.default_rng()
+
+
+def make_random_g(rng=None):
+    rng = rng or RNG
+    # Posiciones de las modas, separadas para que se distinga la bimodalidad.
+    while True:
+        x1 = rng.uniform(-3.5, 3.5)
+        x2 = rng.uniform(-3.5, 3.5)
+        if abs(x1 - x2) >= 2.0:
+            break
+    # Alturas: una mayor (moda dominante), otra menor.
+    h_big = rng.uniform(1.8, 2.5)
+    h_small = rng.uniform(0.7, 1.3)
+    # Cuál de las dos es la dominante (izq o der) se decide al azar.
+    if rng.random() < 0.5:
+        x_big, x_small = x1, x2
+    else:
+        x_big, x_small = x2, x1
+    # Anchos.
+    w_big = rng.uniform(0.5, 1.0)
+    w_small = rng.uniform(0.5, 1.0)
+
+    def g(x):
+        return (h_big * np.exp(-0.5 * ((x - x_big) / w_big) ** 2)
+                + h_small * np.exp(-0.5 * ((x - x_small) / w_small) ** 2))
+
+    return g
 
 
 # ===========================================================
@@ -114,7 +155,11 @@ state = {
     "ls": 1.0,
     "sf": 1.0,
     "sigma_n_current": 0.2,
+    "ucb_beta": 2.0,
     "history_means": [], # lista de arrays mu(Xs) anteriores
+    "g": make_random_g(),
+    "n_explore": 0,
+    "n_exploit": 0,
 }
 
 X_MIN, X_MAX = -5.0, 5.0
@@ -128,7 +173,8 @@ Xs = np.linspace(X_MIN, X_MAX, 400)
 fig, ax = plt.subplots(figsize=(11, 7))
 plt.subplots_adjust(left=0.28, bottom=0.28, right=0.97, top=0.93)
 
-ax.plot(Xs, g(Xs), color="green", ls="--", lw=2, label="g(x) real (oculta)")
+true_line, = ax.plot(Xs, state["g"](Xs), color="green", ls="--", lw=2,
+                     label="g(x) real (oculta)")
 ax.axhline(0.0, color="gray", ls=":", lw=1, label="prior  f(x)=0")
 
 post_line, = ax.plot([], [], color="blue", lw=2, label="f(x) posterior (actual)")
@@ -145,6 +191,11 @@ ax.legend(loc="upper right")
 
 history_artists = []
 errbar_holder = [None]
+
+counter_text = fig.text(
+    0.02, 0.95, "", fontsize=10, family="monospace",
+    verticalalignment="top",
+)
 
 
 def _safe_remove(artist):
@@ -167,6 +218,11 @@ def _remove_errorbar(eb):
 
 def redraw():
     global post_band
+
+    counter_text.set_text(
+        f"Exploración: {state['n_explore']:>3d}\n"
+        f"Explotación: {state['n_exploit']:>3d}"
+    )
 
     # Borrar artistas previos de historia y puntos
     for a in history_artists:
@@ -210,6 +266,35 @@ def redraw():
 
 
 # ===========================================================
+# Helpers para agregar observaciones (usado por click y botones)
+# ===========================================================
+def _current_posterior():
+    """Devuelve (mu, var) sobre Xs con el estado actual, o (None, None) si no hay datos."""
+    if len(state["X"]) == 0:
+        return None, None
+    kfn = KERNELS[state["kernel"]]
+    return gp_posterior(state["X"], state["y"], state["sn"],
+                        Xs, kfn, state["ls"], state["sf"])
+
+
+def _add_observation(x_new, y_new, sn):
+    # Snapshot de la posterior actual antes de incorporar el dato.
+    mu_now, _ = _current_posterior()
+    if mu_now is not None:
+        state["history_means"].append(mu_now)
+    state["X"].append(float(x_new))
+    state["y"].append(float(y_new))
+    state["sn"].append(float(sn))
+    redraw()
+
+
+def _sample_g_at(x):
+    """Simula una observación ruidosa de g(x) con la incerteza configurada."""
+    sn = state["sigma_n_current"]
+    return float(state["g"](x) + RNG.normal(0.0, sn)), sn
+
+
+# ===========================================================
 # Click handler
 # ===========================================================
 def on_click(event):
@@ -229,20 +314,9 @@ def on_click(event):
     if arbitrary:
         y_new = float(event.ydata)
     else:
-        y_new = float(g(x_new) + np.random.normal(0.0, sn))
+        y_new = float(state["g"](x_new) + RNG.normal(0.0, sn))
 
-    # Guardar la posterior actual como historia (antes de incorporar el nuevo dato)
-    if len(state["X"]) > 0:
-        kfn = KERNELS[state["kernel"]]
-        mu_now, _ = gp_posterior(state["X"], state["y"], state["sn"],
-                                 Xs, kfn, state["ls"], state["sf"])
-        state["history_means"].append(mu_now)
-
-    state["X"].append(x_new)
-    state["y"].append(y_new)
-    state["sn"].append(sn)
-
-    redraw()
+    _add_observation(x_new, y_new, sn)
 
 
 fig.canvas.mpl_connect("button_press_event", on_click)
@@ -283,7 +357,7 @@ sl_sf.on_changed(_on_sf)
 # ===========================================================
 # Radio buttons (kernel)
 # ===========================================================
-ax_radio = plt.axes([0.02, 0.50, 0.22, 0.30])
+ax_radio = plt.axes([0.02, 0.69, 0.22, 0.20])
 ax_radio.set_title("Kernel  k(x, x')", fontsize=10)
 radio = RadioButtons(ax_radio, list(KERNELS.keys()), active=0)
 
@@ -299,7 +373,124 @@ radio.on_clicked(_on_kernel)
 # ===========================================================
 # Botones
 # ===========================================================
-ax_clr_hist = plt.axes([0.04, 0.40, 0.18, 0.05])
+ax_explore = plt.axes([0.04, 0.62, 0.18, 0.045])
+btn_explore = Button(ax_explore, "Exploración", color="#cde7ff", hovercolor="#a8d2f8")
+
+
+def _on_explore(event):
+    """Agrega un punto donde la varianza posterior es máxima."""
+    if len(state["X"]) == 0:
+        # Sin datos, la varianza prior es uniforme: muestreo aleatorio en el dominio.
+        x_new = float(RNG.uniform(X_MIN, X_MAX))
+    else:
+        _, var = _current_posterior()
+        x_new = float(Xs[int(np.argmax(var))])
+    y_new, sn = _sample_g_at(x_new)
+    state["n_explore"] += 1
+    _add_observation(x_new, y_new, sn)
+
+
+btn_explore.on_clicked(_on_explore)
+
+
+ax_exploit = plt.axes([0.04, 0.56, 0.18, 0.045])
+btn_exploit = Button(ax_exploit, "Explotación", color="#ffd8c2", hovercolor="#f8b690")
+
+
+def _on_exploit(event):
+    """Agrega un punto donde la media posterior es máxima (greedy)."""
+    if len(state["X"]) == 0:
+        # Sin datos, la media prior es 0 en todos lados: muestreo aleatorio.
+        x_new = float(RNG.uniform(X_MIN, X_MAX))
+    else:
+        mu, _ = _current_posterior()
+        x_new = float(Xs[int(np.argmax(mu))])
+    y_new, sn = _sample_g_at(x_new)
+    state["n_exploit"] += 1
+    _add_observation(x_new, y_new, sn)
+
+
+btn_exploit.on_clicked(_on_exploit)
+
+
+ax_ucb = plt.axes([0.04, 0.50, 0.18, 0.045])
+btn_ucb = Button(ax_ucb, "UCB", color="#e8d6ff", hovercolor="#c9adf2")
+
+
+def _on_ucb(event):
+    """Agrega un punto en argmax(μ + β·σ): balance entre explotación y exploración."""
+    beta = state["ucb_beta"]
+    if len(state["X"]) == 0:
+        # Sin datos: μ=0 y σ=σ_f en todo Xs => UCB plano. Muestreo aleatorio.
+        x_new = float(RNG.uniform(X_MIN, X_MAX))
+    else:
+        mu, var = _current_posterior()
+        acq = mu + beta * np.sqrt(var)
+        x_new = float(Xs[int(np.argmax(acq))])
+    y_new, sn = _sample_g_at(x_new)
+    _add_observation(x_new, y_new, sn)
+
+
+btn_ucb.on_clicked(_on_ucb)
+
+
+ax_beta = plt.axes([0.06, 0.465, 0.14, 0.022])
+sl_beta = Slider(ax_beta, r"$\beta$", 0.0, 5.0, valinit=2.0)
+
+
+def _on_beta(v):
+    state["ucb_beta"] = float(v)
+
+
+sl_beta.on_changed(_on_beta)
+
+
+ax_ei = plt.axes([0.04, 0.41, 0.18, 0.045])
+btn_ei = Button(ax_ei, "EI", color="#fff0b0", hovercolor="#f5dc73")
+
+
+def _on_ei(event):
+    """Agrega un punto en argmax de Expected Improvement sobre el mejor y observado."""
+    if len(state["X"]) == 0:
+        # Sin datos: f* indefinido, EI plana => muestreo aleatorio.
+        x_new = float(RNG.uniform(X_MIN, X_MAX))
+    else:
+        mu, var = _current_posterior()
+        sd = np.sqrt(var)
+        f_star = max(state["y"])
+        eps = 1e-9
+        z = (mu - f_star) / np.maximum(sd, eps)
+        ei = (mu - f_star) * norm.cdf(z) + sd * norm.pdf(z)
+        ei = np.where(sd < eps, 0.0, ei)
+        x_new = float(Xs[int(np.argmax(ei))])
+    y_new, sn = _sample_g_at(x_new)
+    _add_observation(x_new, y_new, sn)
+
+
+btn_ei.on_clicked(_on_ei)
+
+
+ax_regen = plt.axes([0.04, 0.35, 0.18, 0.045])
+btn_regen = Button(ax_regen, "Regenerar g(x)", color="#d9f5d2", hovercolor="#b6e6a8")
+
+
+def _on_regen(event):
+    """Sortea una nueva g(x) bimodal y limpia las observaciones."""
+    state["g"] = make_random_g()
+    state["X"].clear()
+    state["y"].clear()
+    state["sn"].clear()
+    state["history_means"].clear()
+    state["n_explore"] = 0
+    state["n_exploit"] = 0
+    true_line.set_data(Xs, state["g"](Xs))
+    redraw()
+
+
+btn_regen.on_clicked(_on_regen)
+
+
+ax_clr_hist = plt.axes([0.04, 0.29, 0.18, 0.045])
 btn_clr_hist = Button(ax_clr_hist, "Limpiar historia")
 
 
@@ -311,7 +502,7 @@ def _on_clr_hist(event):
 btn_clr_hist.on_clicked(_on_clr_hist)
 
 
-ax_reset = plt.axes([0.04, 0.33, 0.18, 0.05])
+ax_reset = plt.axes([0.04, 0.23, 0.18, 0.045])
 btn_reset = Button(ax_reset, "Reset todo")
 
 
@@ -320,6 +511,8 @@ def _on_reset(event):
     state["y"].clear()
     state["sn"].clear()
     state["history_means"].clear()
+    state["n_explore"] = 0
+    state["n_exploit"] = 0
     redraw()
 
 
