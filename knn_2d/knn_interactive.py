@@ -393,5 +393,64 @@ sl_n_train.on_changed(_on_data_slider)
 sl_n_test.on_changed(_on_data_slider)
 sl_k.on_changed(_on_k)
 
+# ===========================================================
+# Recuadro Métrica
+# ===========================================================
+_add_group_box(0.30, 0.04, 0.32, 0.255, "Métrica")
+ax_metric = plt.axes([0.31, 0.07, 0.10, 0.20])
+radio_metric = RadioButtons(ax_metric, METRICS,
+                             active=METRICS.index(DEFAULTS["metric"]))
+
+ax_p = plt.axes([0.45, 0.16, 0.15, 0.020])
+sl_p = Slider(ax_p, "p (Mink.)", 1.0, 5.0, valinit=DEFAULTS["minkowski_p"])
+sl_p.set_active(DEFAULTS["metric"] == "Minkowski")
+
+
+def _on_metric(label):
+    state["metric"] = label
+    sl_p.set_active(label == "Minkowski")
+    if label == "Mahalanobis":
+        state["mahal_VI"] = _compute_mahal_VI(state["X_train"])
+    redraw()
+
+
+def _on_p(v):
+    state["minkowski_p"] = float(v)
+    if state["metric"] == "Minkowski":
+        redraw()
+
+
+radio_metric.on_clicked(_on_metric)
+sl_p.on_changed(_on_p)
+
+
+# ===========================================================
+# Recuadro Pesos
+# ===========================================================
+_add_group_box(0.65, 0.04, 0.32, 0.255, "Pesos")
+ax_weights = plt.axes([0.66, 0.07, 0.10, 0.20])
+radio_weights = RadioButtons(ax_weights, WEIGHTS,
+                              active=WEIGHTS.index(DEFAULTS["weights"]))
+
+ax_h = plt.axes([0.80, 0.16, 0.15, 0.020])
+sl_h = Slider(ax_h, "h (gauss)", 0.1, 3.0, valinit=DEFAULTS["gaussian_h"])
+sl_h.set_active(DEFAULTS["weights"] == "gaussiano")
+
+
+def _on_weights(label):
+    state["weights"] = label
+    sl_h.set_active(label == "gaussiano")
+    redraw()
+
+
+def _on_h(v):
+    state["gaussian_h"] = float(v)
+    if state["weights"] == "gaussiano":
+        redraw()
+
+
+radio_weights.on_clicked(_on_weights)
+sl_h.on_changed(_on_h)
+
 if __name__ == "__main__":
     plt.show()
