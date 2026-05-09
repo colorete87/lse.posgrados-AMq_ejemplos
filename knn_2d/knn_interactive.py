@@ -361,9 +361,18 @@ def redraw():
         train_scatter.set_offsets(np.empty((0, 2)))
 
     if state["show_test"] and len(state["X_test"]) > 0:
-        edge_colors = [CLASS_COLORS[c] for c in state["y_test"]]
+        face_colors = [CLASS_COLORS[c] for c in state["y_test"]]
+        if state["y_test_pred"] is not None:
+            edge_colors = ["#2ca02c" if p == y else "#d62728"
+                           for p, y in zip(state["y_test_pred"], state["y_test"])]
+            edge_lw = 1.6
+        else:
+            edge_colors = face_colors
+            edge_lw = 1.2
         test_scatter.set_offsets(state["X_test"])
+        test_scatter.set_facecolors("none")
         test_scatter.set_edgecolors(edge_colors)
+        test_scatter.set_linewidths(edge_lw)
     else:
         test_scatter.set_offsets(np.empty((0, 2)))
 
@@ -476,6 +485,70 @@ def on_click(event):
 
 
 fig.canvas.mpl_connect("button_press_event", on_click)
+
+# ===========================================================
+# Recuadro Evaluación
+# ===========================================================
+_add_group_box(0.025, 0.55, 0.21, 0.255, "Evaluación")
+
+ax_btn_click = plt.axes([0.04, 0.74, 0.18, 0.04])
+btn_click = Button(ax_btn_click, "Eval. punto (click)",
+                    color="#cde7ff", hovercolor="#a8d2f8")
+
+ax_btn_test = plt.axes([0.04, 0.68, 0.18, 0.04])
+btn_test = Button(ax_btn_test, "Test completo",
+                   color="#ffd8c2", hovercolor="#f8b690")
+
+ax_btn_kfold = plt.axes([0.04, 0.62, 0.18, 0.04])
+btn_kfold = Button(ax_btn_kfold, "K-fold CV (5)",
+                    color="#fff0b0", hovercolor="#f5dc73")
+
+
+def _on_btn_click(_event):
+    # No hace nada: el click handler ya está siempre activo. El botón es
+    # un recordatorio visual + lugar reservado para un futuro modo "armado".
+    pass
+
+
+def _on_btn_test(_event):
+    if len(state["X_test"]) == 0 or len(state["X_train"]) == 0:
+        return
+    metric_fn = _build_metric_fn(state["metric"], state["X_train"],
+                                  state["minkowski_p"], state["mahal_VI"])
+    weight_fn = _build_weight_fn(state["weights"], state["gaussian_h"])
+    pred, _, _ = predict_knn(state["X_test"], state["X_train"], state["y_train"],
+                              state["n_classes"], state["k"],
+                              metric_fn, weight_fn)
+    acc = float(np.mean(pred == state["y_test"]))
+    state["y_test_pred"] = pred
+    state["scores"].insert(0, {
+        "type": "test", "k": state["k"],
+        "metric": state["metric"], "weights": state["weights"],
+        "score": acc,
+    })
+    redraw()
+
+
+def _on_btn_kfold(_event):
+    if len(state["X_train"]) < 5:
+        return
+    metric_fn = _build_metric_fn(state["metric"], state["X_train"],
+                                  state["minkowski_p"], state["mahal_VI"])
+    weight_fn = _build_weight_fn(state["weights"], state["gaussian_h"])
+    acc = k_fold_score(state["X_train"], state["y_train"],
+                       state["n_classes"], state["k"],
+                       metric_fn, weight_fn, n_folds=5, rng=RNG)
+    state["scores"].insert(0, {
+        "type": "kfold", "k": state["k"],
+        "metric": state["metric"], "weights": state["weights"],
+        "score": acc,
+    })
+    redraw()
+
+
+btn_click.on_clicked(_on_btn_click)
+btn_test.on_clicked(_on_btn_test)
+btn_kfold.on_clicked(_on_btn_kfold)
 
 # ===========================================================
 # Recuadro Métrica
