@@ -153,6 +153,8 @@ def make_random_dataset(n_classes, n_train, n_test, rng=None):
             z = rng.standard_normal((n, 2))
             Xs.append(z @ Ls[c].T + means[c])
             ys.append(np.full(n, c, dtype=int))
+        if not Xs:
+            return np.empty((0, 2)), np.empty(0, dtype=int)
         return np.concatenate(Xs), np.concatenate(ys)
 
     def split(total):
