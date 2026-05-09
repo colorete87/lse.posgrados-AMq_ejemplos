@@ -47,3 +47,18 @@ def _dist_mahalanobis(X1, X2, VI):
     # cuadrática de Mahalanobis: diff @ VI @ diffᵀ por par
     inner = np.einsum('ijk,kl,ijl->ij', diff, VI, diff)
     return np.sqrt(np.maximum(inner, 0.0))
+
+
+# ===========================================================
+# Pesos (d: array, devuelve mismos shape con weights >= 0)
+# ===========================================================
+def _w_uniform(d):
+    return np.ones_like(d)
+
+
+def _w_inv_dist(d, eps=1e-16):
+    return 1.0 / (d + eps)
+
+
+def _w_gaussian(d, h=1.0):
+    return np.exp(-0.5 * (d / h) ** 2)
