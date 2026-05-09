@@ -235,7 +235,7 @@ def _compute_mahal_VI(X_train):
 
 
 X_MIN, X_MAX = -5.0, 5.0
-GRID = 60
+GRID = 100
 gxs = np.linspace(X_MIN, X_MAX, GRID)
 GX1, GX2 = np.meshgrid(gxs, gxs)
 GRID_PTS = np.column_stack([GX1.ravel(), GX2.ravel()])
@@ -249,8 +249,8 @@ DEFAULTS = {
     "minkowski_p": 3.0,
     "weights": "uniform",
     "gaussian_h": 1.0,
-    "show_decision": True,
-    "show_test": True,
+    "show_decision": False,
+    "show_test": False,
 }
 
 state = dict(DEFAULTS)
@@ -503,25 +503,15 @@ fig.canvas.mpl_connect("button_press_event", on_click)
 # ===========================================================
 # Recuadro Evaluación
 # ===========================================================
-_add_group_box(0.025, 0.55, 0.21, 0.255, "Evaluación")
+_add_group_box(0.025, 0.61, 0.21, 0.17, "Evaluación")
 
-ax_btn_click = plt.axes([0.04, 0.74, 0.18, 0.04])
-btn_click = Button(ax_btn_click, "Eval. punto (click)",
-                    color="#cde7ff", hovercolor="#a8d2f8")
-
-ax_btn_test = plt.axes([0.04, 0.68, 0.18, 0.04])
+ax_btn_test = plt.axes([0.04, 0.71, 0.18, 0.04])
 btn_test = Button(ax_btn_test, "Test completo",
                    color="#ffd8c2", hovercolor="#f8b690")
 
-ax_btn_kfold = plt.axes([0.04, 0.62, 0.18, 0.04])
+ax_btn_kfold = plt.axes([0.04, 0.65, 0.18, 0.04])
 btn_kfold = Button(ax_btn_kfold, "K-fold CV (5)",
                     color="#fff0b0", hovercolor="#f5dc73")
-
-
-def _on_btn_click(_event):
-    # No hace nada: el click handler ya está siempre activo. El botón es
-    # un recordatorio visual + lugar reservado para un futuro modo "armado".
-    pass
 
 
 def _on_btn_test(_event):
@@ -560,7 +550,6 @@ def _on_btn_kfold(_event):
     redraw()
 
 
-btn_click.on_clicked(_on_btn_click)
 btn_test.on_clicked(_on_btn_test)
 btn_kfold.on_clicked(_on_btn_kfold)
 
