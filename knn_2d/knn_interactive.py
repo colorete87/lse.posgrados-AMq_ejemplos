@@ -565,6 +565,46 @@ btn_test.on_clicked(_on_btn_test)
 btn_kfold.on_clicked(_on_btn_kfold)
 
 # ===========================================================
+# Recuadro Control
+# ===========================================================
+_add_group_box(0.025, 0.36, 0.21, 0.155, "Control")
+
+ax_btn_regen = plt.axes([0.04, 0.45, 0.18, 0.04])
+btn_regen = Button(ax_btn_regen, "Regenerar datos",
+                    color="#d9f5d2", hovercolor="#b6e6a8")
+
+ax_btn_reset = plt.axes([0.04, 0.39, 0.18, 0.04])
+btn_reset = Button(ax_btn_reset, "Reset todo")
+
+
+def _on_btn_regen(_event):
+    _regenerate_data()
+    state["scores"].clear()
+    state["last_query"] = None
+    redraw()
+
+
+def _on_btn_reset(_event):
+    # Resetea sliders + radios a defaults; eso dispara los callbacks que
+    # regeneran datos y limpian scores cuando corresponda.
+    state["scores"].clear()
+    state["last_query"] = None
+    state["y_test_pred"] = None
+    sl_n_classes.set_val(DEFAULTS["n_classes"])
+    sl_n_train.set_val(DEFAULTS["n_train"])
+    sl_n_test.set_val(DEFAULTS["n_test"])
+    sl_k.set_val(DEFAULTS["k"])
+    sl_p.set_val(DEFAULTS["minkowski_p"])
+    sl_h.set_val(DEFAULTS["gaussian_h"])
+    radio_metric.set_active(METRICS.index(DEFAULTS["metric"]))
+    radio_weights.set_active(WEIGHTS.index(DEFAULTS["weights"]))
+    redraw()
+
+
+btn_regen.on_clicked(_on_btn_regen)
+btn_reset.on_clicked(_on_btn_reset)
+
+# ===========================================================
 # Recuadro Métrica
 # ===========================================================
 _add_group_box(0.30, 0.04, 0.32, 0.255, "Métrica")
