@@ -333,7 +333,26 @@ def _clear_neighbor_lines():
 
 
 def redraw():
-    # train + test
+    # 1. Región de decisión
+    _safe_remove(decision_image[0])
+    decision_image[0] = None
+    if state["show_decision"] and len(state["X_train"]) > 0:
+        metric_fn = _build_metric_fn(state["metric"], state["X_train"],
+                                      state["minkowski_p"], state["mahal_VI"])
+        weight_fn = _build_weight_fn(state["weights"], state["gaussian_h"])
+        pred_grid, _, _ = predict_knn(GRID_PTS, state["X_train"], state["y_train"],
+                                       state["n_classes"], state["k"],
+                                       metric_fn, weight_fn)
+        # imshow con colormap personalizado por clase
+        from matplotlib.colors import ListedColormap
+        cmap = ListedColormap(CLASS_COLORS[:state["n_classes"]])
+        decision_image[0] = ax.imshow(
+            pred_grid.reshape(GRID, GRID),
+            extent=(X_MIN, X_MAX, X_MIN, X_MAX),
+            origin="lower", cmap=cmap, alpha=0.18,
+            vmin=0, vmax=state["n_classes"] - 1, interpolation="nearest", zorder=0)
+
+    # 2. Train + test
     if len(state["X_train"]) > 0:
         colors_tr = [CLASS_COLORS[c] for c in state["y_train"]]
         train_scatter.set_offsets(state["X_train"])
@@ -392,6 +411,27 @@ sl_n_classes.on_changed(_on_data_slider)
 sl_n_train.on_changed(_on_data_slider)
 sl_n_test.on_changed(_on_data_slider)
 sl_k.on_changed(_on_k)
+
+# ===========================================================
+# Recuadro Vista
+# ===========================================================
+_add_group_box(0.025, 0.83, 0.21, 0.10, "Vista")
+ax_check = plt.axes([0.04, 0.835, 0.18, 0.085])
+ax_check.set_facecolor("none")
+chk = CheckButtons(ax_check,
+                    ["Mostrar región de decisión", "Mostrar test points"],
+                    actives=[DEFAULTS["show_decision"], DEFAULTS["show_test"]])
+
+
+def _on_check(label):
+    if label == "Mostrar región de decisión":
+        state["show_decision"] = not state["show_decision"]
+    elif label == "Mostrar test points":
+        state["show_test"] = not state["show_test"]
+    redraw()
+
+
+chk.on_clicked(_on_check)
 
 # ===========================================================
 # Recuadro Métrica
