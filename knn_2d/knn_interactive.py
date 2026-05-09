@@ -193,3 +193,166 @@ def k_fold_score(X_train, y_train, n_classes, k, metric_fn, weight_fn,
                                  metric_fn, weight_fn)
         accs.append(np.mean(pred == y_train[val_idx]))
     return float(np.mean(accs))
+
+
+# ===========================================================
+# Registries y defaults
+# ===========================================================
+METRICS = ["Euclidiana", "Manhattan", "Minkowski", "Mahalanobis"]
+WEIGHTS = ["uniform", "1/d", "gaussiano"]
+
+
+def _build_metric_fn(name, X_train, p, mahal_VI):
+    if name == "Euclidiana":
+        return _dist_euclidean
+    if name == "Manhattan":
+        return _dist_manhattan
+    if name == "Minkowski":
+        return lambda X1, X2: _dist_minkowski(X1, X2, p=p)
+    if name == "Mahalanobis":
+        return lambda X1, X2: _dist_mahalanobis(X1, X2, VI=mahal_VI)
+    raise ValueError(name)
+
+
+def _build_weight_fn(name, h):
+    if name == "uniform":
+        return _w_uniform
+    if name == "1/d":
+        return _w_inv_dist
+    if name == "gaussiano":
+        return lambda d: _w_gaussian(d, h=h)
+    raise ValueError(name)
+
+
+def _compute_mahal_VI(X_train):
+    if len(X_train) < 3:
+        return np.eye(2)
+    cov = np.cov(X_train.T) + 1e-6 * np.eye(2)
+    try:
+        return np.linalg.inv(cov)
+    except np.linalg.LinAlgError:
+        return np.eye(2)
+
+
+X_MIN, X_MAX = -5.0, 5.0
+GRID = 60
+gxs = np.linspace(X_MIN, X_MAX, GRID)
+GX1, GX2 = np.meshgrid(gxs, gxs)
+GRID_PTS = np.column_stack([GX1.ravel(), GX2.ravel()])
+
+DEFAULTS = {
+    "n_classes": 3,
+    "n_train": 150,
+    "n_test": 50,
+    "k": 5,
+    "metric": "Euclidiana",
+    "minkowski_p": 3.0,
+    "weights": "uniform",
+    "gaussian_h": 1.0,
+    "show_decision": True,
+    "show_test": True,
+}
+
+state = dict(DEFAULTS)
+state.update({
+    "X_train": np.empty((0, 2)),
+    "y_train": np.empty(0, dtype=int),
+    "X_test": np.empty((0, 2)),
+    "y_test": np.empty(0, dtype=int),
+    "y_test_pred": None,
+    "mahal_VI": np.eye(2),
+    "scores": [],          # list[dict]
+    "last_query": None,    # dict | None
+})
+
+
+def _regenerate_data():
+    """Resortea X_train, y_train, X_test, y_test y recalcula mahal_VI.
+    No toca scores ni last_query (eso lo hace el caller)."""
+    Xtr, ytr, Xte, yte = make_random_dataset(
+        state["n_classes"], state["n_train"], state["n_test"], RNG)
+    state["X_train"] = Xtr
+    state["y_train"] = ytr
+    state["X_test"] = Xte
+    state["y_test"] = yte
+    state["y_test_pred"] = None
+    state["mahal_VI"] = _compute_mahal_VI(Xtr)
+
+
+# ===========================================================
+# Figura
+# ===========================================================
+fig = plt.figure(figsize=(13, 7.5))
+ax = fig.add_axes([0.27, 0.36, 0.50, 0.58])
+ax_scores = fig.add_axes([0.80, 0.36, 0.18, 0.58])
+ax_scores.set_xticks([])
+ax_scores.set_yticks([])
+ax_scores.set_facecolor("#fafafa")
+ax_scores.set_title("Scores", fontsize=10, weight="bold")
+
+ax.set_aspect("equal")
+ax.set_xlim(X_MIN, X_MAX)
+ax.set_ylim(X_MIN, X_MAX)
+ax.set_xlabel("$x_1$")
+ax.set_ylabel("$x_2$")
+ax.grid(alpha=0.3)
+ax.set_title("k-NN interactivo (2D)", loc="left")
+
+CLASS_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
+
+
+def _add_group_box(x, y, w, h, label):
+    rect = Rectangle((x, y), w, h, transform=fig.transFigure,
+                     linewidth=0.9, edgecolor="#666666",
+                     facecolor="none", zorder=0)
+    fig.add_artist(rect)
+    return fig.text(x + w / 2, y + h + 0.006, label,
+                    ha="center", va="bottom", fontsize=9, weight="bold",
+                    color="#333333")
+
+
+# Artistas que reusamos en cada redraw
+train_scatter = ax.scatter([], [], s=40, edgecolors="black", linewidths=0.5)
+test_scatter = ax.scatter([], [], s=40, facecolors="none", linewidths=1.2)
+query_marker, = ax.plot([], [], "x", color="black", ms=14, mew=2.5, zorder=12)
+neighbor_lines = []   # lista de artistas Line2D que conectan query con vecinos
+decision_image = [None]  # AxesImage opcional
+
+
+def _safe_remove(artist):
+    try:
+        artist.remove()
+    except Exception:
+        pass
+
+
+def _clear_neighbor_lines():
+    for ln in neighbor_lines:
+        _safe_remove(ln)
+    neighbor_lines.clear()
+
+
+def redraw():
+    # train + test
+    if len(state["X_train"]) > 0:
+        colors_tr = [CLASS_COLORS[c] for c in state["y_train"]]
+        train_scatter.set_offsets(state["X_train"])
+        train_scatter.set_facecolors(colors_tr)
+    else:
+        train_scatter.set_offsets(np.empty((0, 2)))
+
+    if state["show_test"] and len(state["X_test"]) > 0:
+        edge_colors = [CLASS_COLORS[c] for c in state["y_test"]]
+        test_scatter.set_offsets(state["X_test"])
+        test_scatter.set_edgecolors(edge_colors)
+    else:
+        test_scatter.set_offsets(np.empty((0, 2)))
+
+    fig.canvas.draw_idle()
+
+
+_regenerate_data()
+redraw()
+
+if __name__ == "__main__":
+    plt.show()
