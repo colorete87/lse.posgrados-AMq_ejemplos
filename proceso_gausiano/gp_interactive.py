@@ -213,6 +213,14 @@ ax.legend(loc="upper right")
 history_artists = []
 errbar_holder = [None]
 
+# Texto que reporta argmax g, argmax μ y la distancia entre ellos.
+distance_text = ax.text(
+    0.015, 0.985, "", transform=ax.transAxes,
+    ha="left", va="top", fontsize=10, family="monospace",
+    bbox=dict(facecolor="white", edgecolor="#bbbbbb", alpha=0.85, pad=3),
+)
+
+
 def _add_group_box(x, y, w, h, label):
     """Dibuja un recuadro con etiqueta encima en coordenadas de figura.
     Devuelve el artista de texto para poder actualizar la etiqueta luego.
@@ -276,6 +284,7 @@ def redraw():
 
     # Posterior actual + banda de 2σ
     _safe_remove(post_band)
+    mu = None
     if len(state["X"]) > 0:
         kfn = KERNELS[state["kernel"]]
         mu, var = gp_posterior(state["X"], state["y"], state["sn"],
@@ -293,6 +302,24 @@ def redraw():
         post_line.set_data([], [])
         post_band = ax.fill_between(Xs, np.zeros_like(Xs), np.zeros_like(Xs),
                                     color="blue", alpha=0.0)
+
+    # Reporte: argmax g(x), argmax μ(x), distancia.  Sólo si g(x) está visible.
+    if true_line.get_visible():
+        g_max_x = float(Xs[int(np.argmax(state["g"](Xs)))])
+        if mu is not None:
+            post_max_x = float(Xs[int(np.argmax(mu))])
+            delta = abs(g_max_x - post_max_x)
+            distance_text.set_text(
+                f"argmax g(x) = {g_max_x:+.2f}    "
+                f"argmax μ(x) = {post_max_x:+.2f}    "
+                f"Δ = {delta:.3f}"
+            )
+        else:
+            distance_text.set_text(
+                f"argmax g(x) = {g_max_x:+.2f}    (sin observaciones)"
+            )
+    else:
+        distance_text.set_text("")
 
     fig.canvas.draw_idle()
 
@@ -440,7 +467,7 @@ def _on_toggle_g(label):
     true_line.set_visible(visible)
     true_line.set_label(TRUE_LINE_LABEL if visible else "_nolegend_")
     ax.legend(loc="upper right")
-    fig.canvas.draw_idle()
+    redraw()
 
 
 chk_g.on_clicked(_on_toggle_g)

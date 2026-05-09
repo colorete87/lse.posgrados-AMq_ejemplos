@@ -196,6 +196,13 @@ ax.set_ylabel("$x_2$")
 ax.grid(alpha=0.3)
 ax.set_title("Proceso Gaussiano interactivo (2D)", loc="left")
 
+# Texto que reporta argmax g, argmax μ y la distancia entre ellos.
+distance_text = ax.text(
+    0.015, 0.985, "", transform=ax.transAxes,
+    ha="left", va="top", fontsize=10, family="monospace",
+    bbox=dict(facecolor="white", edgecolor="#bbbbbb", alpha=0.85, pad=3),
+)
+
 # Marcadores
 g_max_marker, = ax.plot([], [], "x", color="green", ms=14, mew=2.5)
 post_max_marker, = ax.plot([], [], "x", color="blue", ms=14, mew=2.5)
@@ -282,6 +289,7 @@ def redraw():
         hist_contours.append(qcs)
 
     # Posterior actual + máximo + observaciones
+    post_max_xy = None
     if len(state["X"]) > 0:
         kfn = KERNELS[state["kernel"]]
         X_train = np.asarray(state["X"])
@@ -291,12 +299,32 @@ def redraw():
         post_contour[0] = ax.contour(XX1, XX2, mu_grid, levels=POST_LEVELS,
                                      colors="blue", linewidths=1.4, alpha=0.95)
         idx = int(np.argmax(mu))
-        post_max_marker.set_data([Xs_grid[idx, 0]], [Xs_grid[idx, 1]])
+        post_max_xy = Xs_grid[idx]
+        post_max_marker.set_data([post_max_xy[0]], [post_max_xy[1]])
         post_max_marker.set_visible(True)
         points_marker.set_data(X_train[:, 0], X_train[:, 1])
     else:
         post_max_marker.set_visible(False)
         points_marker.set_data([], [])
+
+    # Reporte: argmax g(x), argmax μ(x), distancia. Sólo si g(x) está visible.
+    if g_max_marker.get_visible():
+        g_vals = state["g"](Xs_grid)
+        g_max_xy = Xs_grid[int(np.argmax(g_vals))]
+        if post_max_xy is not None:
+            delta = float(np.linalg.norm(post_max_xy - g_max_xy))
+            distance_text.set_text(
+                f"argmax g(x) = ({g_max_xy[0]:+.2f}, {g_max_xy[1]:+.2f})\n"
+                f"argmax μ(x) = ({post_max_xy[0]:+.2f}, {post_max_xy[1]:+.2f})\n"
+                f"Δ = {delta:.3f}"
+            )
+        else:
+            distance_text.set_text(
+                f"argmax g(x) = ({g_max_xy[0]:+.2f}, {g_max_xy[1]:+.2f})\n"
+                f"(sin observaciones)"
+            )
+    else:
+        distance_text.set_text("")
 
     fig.canvas.draw_idle()
 
@@ -427,7 +455,7 @@ def _on_toggle_g(_label):
     if g_contour[0] is not None:
         g_contour[0].set_visible(visible)
     _refresh_legend()
-    fig.canvas.draw_idle()
+    redraw()
 
 
 chk_g.on_clicked(_on_toggle_g)
