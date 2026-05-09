@@ -367,6 +367,24 @@ def redraw():
     else:
         test_scatter.set_offsets(np.empty((0, 2)))
 
+    # 3. Query y vecinos del último click
+    _clear_neighbor_lines()
+    if state["last_query"] is not None and len(state["X_train"]) > 0:
+        q = state["last_query"]
+        query_marker.set_data([q["x"]], [q["y"]])
+        for idx in q["neighbors"]:
+            xs = [q["x"], state["X_train"][idx, 0]]
+            ys = [q["y"], state["X_train"][idx, 1]]
+            ln, = ax.plot(xs, ys, color="black", lw=0.7, alpha=0.6, zorder=11)
+            neighbor_lines.append(ln)
+        ax.set_title(
+            f"k-NN interactivo (2D)  —  query=({q['x']:+.2f}, {q['y']:+.2f})  "
+            f"pred=clase {q['pred']}  conf={q['conf']:.2f}",
+            loc="left", fontsize=10)
+    else:
+        query_marker.set_data([], [])
+        ax.set_title("k-NN interactivo (2D)", loc="left", fontsize=10)
+
     fig.canvas.draw_idle()
 
 
@@ -432,6 +450,32 @@ def _on_check(label):
 
 
 chk.on_clicked(_on_check)
+
+# ===========================================================
+# Click handler: evalúa un punto, dibuja vecinos y caption
+# ===========================================================
+def on_click(event):
+    if event.inaxes != ax:
+        return
+    if event.xdata is None or event.ydata is None:
+        return
+    x = float(event.xdata); y = float(event.ydata)
+    metric_fn = _build_metric_fn(state["metric"], state["X_train"],
+                                  state["minkowski_p"], state["mahal_VI"])
+    weight_fn = _build_weight_fn(state["weights"], state["gaussian_h"])
+    pred, conf, nbr = predict_knn(np.array([[x, y]]), state["X_train"],
+                                   state["y_train"], state["n_classes"],
+                                   state["k"], metric_fn, weight_fn)
+    state["last_query"] = {
+        "x": x, "y": y,
+        "pred": int(pred[0]),
+        "conf": float(conf[0]),
+        "neighbors": nbr[0].tolist(),
+    }
+    redraw()
+
+
+fig.canvas.mpl_connect("button_press_event", on_click)
 
 # ===========================================================
 # Recuadro Métrica
