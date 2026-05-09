@@ -289,6 +289,10 @@ ax_scores.set_xticks([])
 ax_scores.set_yticks([])
 ax_scores.set_facecolor("#fafafa")
 ax_scores.set_title("Scores", fontsize=10, weight="bold")
+scores_text = ax_scores.text(
+    0.02, 0.98, "", transform=ax_scores.transAxes,
+    ha="left", va="top", fontsize=9, family="monospace",
+)
 
 ax.set_aspect("equal")
 ax.set_xlim(X_MIN, X_MAX)
@@ -375,6 +379,16 @@ def redraw():
         test_scatter.set_linewidths(edge_lw)
     else:
         test_scatter.set_offsets(np.empty((0, 2)))
+
+    # 4. Lista de scores (más recientes arriba, hasta 12)
+    lines = []
+    for i, s in enumerate(state["scores"][:12]):
+        n = len(state["scores"]) - i
+        m = {"Euclidiana": "eucl", "Manhattan": "manh",
+             "Minkowski": "mink", "Mahalanobis": "mahal"}[s["metric"]]
+        w = {"uniform": "uni", "1/d": "1/d", "gaussiano": "gau"}[s["weights"]]
+        lines.append(f"[{n:>2}] {s['type']:<5} k={s['k']:<2} {m:<5} {w:<3}  acc={s['score']:.3f}")
+    scores_text.set_text("\n".join(lines))
 
     # 3. Query y vecinos del último click
     _clear_neighbor_lines()
