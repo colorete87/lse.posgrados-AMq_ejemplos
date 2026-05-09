@@ -169,3 +169,27 @@ def make_random_dataset(n_classes, n_train, n_test, rng=None):
     perm_te = rng.permutation(len(X_test))
     return (X_train[perm_tr], y_train[perm_tr],
             X_test[perm_te], y_test[perm_te])
+
+
+# ===========================================================
+# K-fold CV (5-fold fijo) sobre el train. Devuelve accuracy promedio.
+# ===========================================================
+def k_fold_score(X_train, y_train, n_classes, k, metric_fn, weight_fn,
+                 n_folds=5, rng=None):
+    rng = rng or RNG
+    n = len(X_train)
+    if n < n_folds:
+        return float("nan")
+    perm = rng.permutation(n)
+    folds = np.array_split(perm, n_folds)
+    accs = []
+    for i in range(n_folds):
+        val_idx = folds[i]
+        tr_idx = np.concatenate([folds[j] for j in range(n_folds) if j != i])
+        if len(tr_idx) == 0:
+            continue
+        pred, _, _ = predict_knn(X_train[val_idx], X_train[tr_idx],
+                                 y_train[tr_idx], n_classes, k,
+                                 metric_fn, weight_fn)
+        accs.append(np.mean(pred == y_train[val_idx]))
+    return float(np.mean(accs))
