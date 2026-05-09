@@ -354,5 +354,44 @@ def redraw():
 _regenerate_data()
 redraw()
 
+# ===========================================================
+# Sliders básicos (# clases, # train, # test, k)
+# ===========================================================
+ax_n_classes = plt.axes([0.06, 0.26, 0.18, 0.020])
+sl_n_classes = Slider(ax_n_classes, "# clases", 2, 6, valinit=DEFAULTS["n_classes"],
+                       valstep=1)
+
+ax_n_train = plt.axes([0.06, 0.21, 0.18, 0.020])
+sl_n_train = Slider(ax_n_train, "# train", 10, 500, valinit=DEFAULTS["n_train"],
+                     valstep=10)
+
+ax_n_test = plt.axes([0.06, 0.16, 0.18, 0.020])
+sl_n_test = Slider(ax_n_test, "# test", 5, 200, valinit=DEFAULTS["n_test"],
+                    valstep=5)
+
+ax_k = plt.axes([0.06, 0.11, 0.18, 0.020])
+sl_k = Slider(ax_k, "k", 1, 25, valinit=DEFAULTS["k"], valstep=1)
+
+
+def _on_data_slider(_v):
+    state["n_classes"] = int(sl_n_classes.val)
+    state["n_train"] = int(sl_n_train.val)
+    state["n_test"] = int(sl_n_test.val)
+    _regenerate_data()
+    state["scores"].clear()
+    state["last_query"] = None
+    redraw()
+
+
+def _on_k(_v):
+    state["k"] = int(sl_k.val)
+    redraw()
+
+
+sl_n_classes.on_changed(_on_data_slider)
+sl_n_train.on_changed(_on_data_slider)
+sl_n_test.on_changed(_on_data_slider)
+sl_k.on_changed(_on_k)
+
 if __name__ == "__main__":
     plt.show()
