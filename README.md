@@ -9,6 +9,7 @@ autocontenido con su propio `pyproject.toml`, gestionado con
 | Carpeta | Tema |
 |---|---|
 | [`proceso_gausiano/`](proceso_gausiano/) | Demo interactivo de Procesos Gaussianos en 1D (regresión y funciones de adquisición). |
+| [`proceso_gausiano_2d/`](proceso_gausiano_2d/) | Misma demo extendida a 2D: `g(x)` mezcla de gaussianas bivariadas, visualización por líneas de nivel. |
 
 ## Cómo correr un ejemplo
 

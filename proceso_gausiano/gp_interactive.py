@@ -44,7 +44,8 @@ con menor opacidad (las más viejas se desvanecen).
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, RadioButtons, Button
+from matplotlib.patches import Rectangle
+from matplotlib.widgets import Slider, RadioButtons, Button, CheckButtons
 from scipy.stats import norm
 
 
@@ -122,6 +123,24 @@ KERNELS = {
 }
 
 
+KERNEL_FORMULAS = {
+    "RBF":
+        r"$k(x,x') = \sigma_f^2\,\exp\!\left(-\dfrac{(x-x')^2}{2\ell^2}\right)$",
+    "Matern 3/2":
+        r"$k(x,x') = \sigma_f^2\left(1+\dfrac{\sqrt{3}\,d}{\ell}\right)e^{-\sqrt{3}\,d/\ell}"
+        r",\ \ d=|x-x'|$",
+    "Matern 5/2":
+        r"$k(x,x') = \sigma_f^2\left(1+\dfrac{\sqrt{5}\,d}{\ell}+\dfrac{5d^2}{3\ell^2}\right)"
+        r"e^{-\sqrt{5}\,d/\ell},\ \ d=|x-x'|$",
+    "Rational Q.":
+        r"$k(x,x') = \sigma_f^2\left(1+\dfrac{(x-x')^2}{2\alpha\ell^2}\right)^{-\alpha}"
+        r",\ \ \alpha=1$",
+    "Periodic":
+        r"$k(x,x') = \sigma_f^2\,\exp\!\left(-\dfrac{2\sin^2(\pi|x-x'|/p)}{\ell^2}\right)"
+        r",\ \ p=2$",
+}
+
+
 # ===========================================================
 # Posterior del GP (con ruido heterocedástico por punto)
 # ===========================================================
@@ -171,10 +190,12 @@ Xs = np.linspace(X_MIN, X_MAX, 400)
 # Figura y layout
 # ===========================================================
 fig, ax = plt.subplots(figsize=(11, 7))
-plt.subplots_adjust(left=0.28, bottom=0.28, right=0.97, top=0.93)
+plt.subplots_adjust(left=0.28, bottom=0.34, right=0.97, top=0.93)
 
+TRUE_LINE_LABEL = "g(x) real"
 true_line, = ax.plot(Xs, state["g"](Xs), color="green", ls="--", lw=2,
-                     label="g(x) real (oculta)")
+                     label="_nolegend_")
+true_line.set_visible(False)  # por defecto oculta; se muestra desde el checkbox
 ax.axhline(0.0, color="gray", ls=":", lw=1, label="prior  f(x)=0")
 
 post_line, = ax.plot([], [], color="blue", lw=2, label="f(x) posterior (actual)")
@@ -186,16 +207,29 @@ ax.set_ylim(Y_MIN, Y_MAX)
 ax.set_xlabel("x")
 ax.set_ylabel("y")
 ax.grid(alpha=0.3)
-ax.set_title("GP interactivo  —  click izq.: muestra g(x)+ruido   |   click der.: punto arbitrario")
+ax.set_title("Proceso Gaussiano interactivo", loc="left")
 ax.legend(loc="upper right")
 
 history_artists = []
 errbar_holder = [None]
 
-counter_text = fig.text(
-    0.02, 0.95, "", fontsize=10, family="monospace",
-    verticalalignment="top",
-)
+def _add_group_box(x, y, w, h, label):
+    """Dibuja un recuadro con etiqueta encima en coordenadas de figura.
+    Devuelve el artista de texto para poder actualizar la etiqueta luego.
+    """
+    rect = Rectangle(
+        (x, y), w, h,
+        transform=fig.transFigure,
+        linewidth=0.9, edgecolor="#666666", facecolor="none",
+        zorder=0,
+    )
+    fig.add_artist(rect)
+    label_artist = fig.text(
+        x + w / 2, y + h + 0.006, label,
+        ha="center", va="bottom",
+        fontsize=9, weight="bold", color="#333333",
+    )
+    return label_artist
 
 
 def _safe_remove(artist):
@@ -219,10 +253,8 @@ def _remove_errorbar(eb):
 def redraw():
     global post_band
 
-    counter_text.set_text(
-        f"Exploración: {state['n_explore']:>3d}\n"
-        f"Explotación: {state['n_exploit']:>3d}"
-    )
+    explore_label.set_text(f"Exploración:  {state['n_explore']}")
+    exploit_label.set_text(f"Explotación:  {state['n_exploit']}")
 
     # Borrar artistas previos de historia y puntos
     for a in history_artists:
@@ -232,12 +264,12 @@ def redraw():
     _remove_errorbar(errbar_holder[0])
     errbar_holder[0] = None
 
-    # Dibujar historia (más viejo => más transparente)
+    # Dibujar historia (más viejo => más transparente, decaimiento suave)
     n = len(state["history_means"])
     for i, mu_old in enumerate(state["history_means"]):
         age = n - 1 - i  # 0 = el más reciente de los viejos
-        alpha = 0.40 * (0.55 ** age)
-        if alpha < 0.03:
+        alpha = 0.45 * (0.88 ** age)
+        if alpha < 0.02:
             continue
         ln, = ax.plot(Xs, mu_old, color="blue", alpha=alpha, lw=1.0)
         history_artists.append(ln)
@@ -294,6 +326,21 @@ def _sample_g_at(x):
     return float(state["g"](x) + RNG.normal(0.0, sn)), sn
 
 
+def _argmax_random_ties(values, rel_tol=1e-3):
+    """argmax con empate aleatorio.
+    Cuando varios puntos del grid tienen valor casi idéntico (típico en zonas
+    donde la varianza posterior es ≈ σ_f²), `np.argmax` devuelve siempre el
+    primer índice y sesga la selección hacia un extremo del dominio. Acá se
+    elige al azar entre todos los puntos cuyo valor está dentro de
+    `rel_tol·rango` del máximo.
+    """
+    values = np.asarray(values)
+    span = max(values.max() - values.min(), 1e-12)
+    threshold = values.max() - rel_tol * span
+    candidates = np.flatnonzero(values >= threshold)
+    return int(RNG.choice(candidates))
+
+
 # ===========================================================
 # Click handler
 # ===========================================================
@@ -323,20 +370,37 @@ fig.canvas.mpl_connect("button_press_event", on_click)
 
 
 # ===========================================================
-# Sliders
+# Sliders y selección de kernel (zona inferior)
 # ===========================================================
-ax_sn = plt.axes([0.30, 0.16, 0.60, 0.025])
-sl_sn = Slider(ax_sn, r"$\sigma_n$ (incerteza nuevo punto)", 0.01, 1.0, valinit=0.2)
 
-ax_ls = plt.axes([0.30, 0.10, 0.60, 0.025])
-sl_ls = Slider(ax_ls, r"$\ell$ (escala kernel)", 0.05, 5.0, valinit=1.0)
-
-ax_sf = plt.axes([0.30, 0.04, 0.60, 0.025])
-sl_sf = Slider(ax_sf, r"$\sigma_f$ (amplitud kernel)", 0.1, 3.0, valinit=1.0)
+# Slider de σ_n: ruido de observación, NO es parámetro del kernel.
+ax_sn = plt.axes([0.32, 0.290, 0.55, 0.020])
+sl_sn = Slider(ax_sn, r"$\sigma_n$  (incerteza obs.)", 0.01, 1.0, valinit=0.2)
 
 
 def _on_sn(v):
     state["sigma_n_current"] = float(v)
+
+
+sl_sn.on_changed(_on_sn)
+
+
+# Recuadro "Kernel": radio + sliders de hiperparámetros + fórmula.
+_add_group_box(0.025, 0.040, 0.945, 0.225, "Kernel")
+
+ax_radio = plt.axes([0.045, 0.060, 0.13, 0.180])
+radio = RadioButtons(ax_radio, list(KERNELS.keys()), active=0)
+
+ax_ls = plt.axes([0.32, 0.215, 0.55, 0.018])
+sl_ls = Slider(ax_ls, r"$\ell$  (escala)", 0.05, 5.0, valinit=1.0)
+
+ax_sf = plt.axes([0.32, 0.175, 0.55, 0.018])
+sl_sf = Slider(ax_sf, r"$\sigma_f$  (amplitud)", 0.1, 3.0, valinit=1.0)
+
+formula_text = fig.text(
+    0.32, 0.090, KERNEL_FORMULAS["RBF"],
+    fontsize=12, va="center", ha="left",
+)
 
 
 def _on_ls(v):
@@ -349,32 +413,43 @@ def _on_sf(v):
     redraw()
 
 
-sl_sn.on_changed(_on_sn)
-sl_ls.on_changed(_on_ls)
-sl_sf.on_changed(_on_sf)
-
-
-# ===========================================================
-# Radio buttons (kernel)
-# ===========================================================
-ax_radio = plt.axes([0.02, 0.69, 0.22, 0.20])
-ax_radio.set_title("Kernel  k(x, x')", fontsize=10)
-radio = RadioButtons(ax_radio, list(KERNELS.keys()), active=0)
-
-
 def _on_kernel(label):
     state["kernel"] = label
+    formula_text.set_text(KERNEL_FORMULAS[label])
+    fig.canvas.draw_idle()
     redraw()
 
 
+sl_ls.on_changed(_on_ls)
+sl_sf.on_changed(_on_sf)
 radio.on_clicked(_on_kernel)
 
 
 # ===========================================================
-# Botones
+# Botones (agrupados visualmente en 3 recuadros)
 # ===========================================================
-ax_explore = plt.axes([0.04, 0.62, 0.18, 0.045])
-btn_explore = Button(ax_explore, "Exploración", color="#cde7ff", hovercolor="#a8d2f8")
+# --- Grupo: Vista ---
+_add_group_box(0.025, 0.880, 0.21, 0.045, "Vista")
+ax_check_g = plt.axes([0.04, 0.882, 0.18, 0.040])
+ax_check_g.set_facecolor("none")
+chk_g = CheckButtons(ax_check_g, ["Mostrar g(x)"], actives=[False])
+
+
+def _on_toggle_g(label):
+    visible = not true_line.get_visible()
+    true_line.set_visible(visible)
+    true_line.set_label(TRUE_LINE_LABEL if visible else "_nolegend_")
+    ax.legend(loc="upper right")
+    fig.canvas.draw_idle()
+
+
+chk_g.on_clicked(_on_toggle_g)
+
+
+# --- Grupo: Exploración ---
+explore_label = _add_group_box(0.025, 0.790, 0.21, 0.05, "Exploración")
+ax_explore = plt.axes([0.04, 0.795, 0.18, 0.04])
+btn_explore = Button(ax_explore, "Paso de exploración", color="#cde7ff", hovercolor="#a8d2f8")
 
 
 def _on_explore(event):
@@ -384,7 +459,7 @@ def _on_explore(event):
         x_new = float(RNG.uniform(X_MIN, X_MAX))
     else:
         _, var = _current_posterior()
-        x_new = float(Xs[int(np.argmax(var))])
+        x_new = float(Xs[_argmax_random_ties(var)])
     y_new, sn = _sample_g_at(x_new)
     state["n_explore"] += 1
     _add_observation(x_new, y_new, sn)
@@ -393,8 +468,10 @@ def _on_explore(event):
 btn_explore.on_clicked(_on_explore)
 
 
-ax_exploit = plt.axes([0.04, 0.56, 0.18, 0.045])
-btn_exploit = Button(ax_exploit, "Explotación", color="#ffd8c2", hovercolor="#f8b690")
+# --- Grupo: Explotación ---
+exploit_label = _add_group_box(0.025, 0.560, 0.21, 0.185, "Explotación")
+ax_exploit = plt.axes([0.04, 0.690, 0.18, 0.04])
+btn_exploit = Button(ax_exploit, "Paso argmax(μ)", color="#ffd8c2", hovercolor="#f8b690")
 
 
 def _on_exploit(event):
@@ -404,7 +481,7 @@ def _on_exploit(event):
         x_new = float(RNG.uniform(X_MIN, X_MAX))
     else:
         mu, _ = _current_posterior()
-        x_new = float(Xs[int(np.argmax(mu))])
+        x_new = float(Xs[_argmax_random_ties(mu)])
     y_new, sn = _sample_g_at(x_new)
     state["n_exploit"] += 1
     _add_observation(x_new, y_new, sn)
@@ -413,8 +490,8 @@ def _on_exploit(event):
 btn_exploit.on_clicked(_on_exploit)
 
 
-ax_ucb = plt.axes([0.04, 0.50, 0.18, 0.045])
-btn_ucb = Button(ax_ucb, "UCB", color="#e8d6ff", hovercolor="#c9adf2")
+ax_ucb = plt.axes([0.04, 0.640, 0.18, 0.04])
+btn_ucb = Button(ax_ucb, "Paso UCB", color="#e8d6ff", hovercolor="#c9adf2")
 
 
 def _on_ucb(event):
@@ -426,15 +503,16 @@ def _on_ucb(event):
     else:
         mu, var = _current_posterior()
         acq = mu + beta * np.sqrt(var)
-        x_new = float(Xs[int(np.argmax(acq))])
+        x_new = float(Xs[_argmax_random_ties(acq)])
     y_new, sn = _sample_g_at(x_new)
+    state["n_exploit"] += 1
     _add_observation(x_new, y_new, sn)
 
 
 btn_ucb.on_clicked(_on_ucb)
 
 
-ax_beta = plt.axes([0.06, 0.465, 0.14, 0.022])
+ax_beta = plt.axes([0.06, 0.615, 0.14, 0.020])
 sl_beta = Slider(ax_beta, r"$\beta$", 0.0, 5.0, valinit=2.0)
 
 
@@ -445,8 +523,8 @@ def _on_beta(v):
 sl_beta.on_changed(_on_beta)
 
 
-ax_ei = plt.axes([0.04, 0.41, 0.18, 0.045])
-btn_ei = Button(ax_ei, "EI", color="#fff0b0", hovercolor="#f5dc73")
+ax_ei = plt.axes([0.04, 0.570, 0.18, 0.04])
+btn_ei = Button(ax_ei, "Paso EI", color="#fff0b0", hovercolor="#f5dc73")
 
 
 def _on_ei(event):
@@ -462,15 +540,18 @@ def _on_ei(event):
         z = (mu - f_star) / np.maximum(sd, eps)
         ei = (mu - f_star) * norm.cdf(z) + sd * norm.pdf(z)
         ei = np.where(sd < eps, 0.0, ei)
-        x_new = float(Xs[int(np.argmax(ei))])
+        x_new = float(Xs[_argmax_random_ties(ei)])
     y_new, sn = _sample_g_at(x_new)
+    state["n_exploit"] += 1
     _add_observation(x_new, y_new, sn)
 
 
 btn_ei.on_clicked(_on_ei)
 
 
-ax_regen = plt.axes([0.04, 0.35, 0.18, 0.045])
+# --- Grupo: Control ---
+_add_group_box(0.025, 0.340, 0.21, 0.185, "Control")
+ax_regen = plt.axes([0.04, 0.465, 0.18, 0.04])
 btn_regen = Button(ax_regen, "Regenerar g(x)", color="#d9f5d2", hovercolor="#b6e6a8")
 
 
@@ -490,7 +571,7 @@ def _on_regen(event):
 btn_regen.on_clicked(_on_regen)
 
 
-ax_clr_hist = plt.axes([0.04, 0.29, 0.18, 0.045])
+ax_clr_hist = plt.axes([0.04, 0.415, 0.18, 0.04])
 btn_clr_hist = Button(ax_clr_hist, "Limpiar historia")
 
 
@@ -502,7 +583,7 @@ def _on_clr_hist(event):
 btn_clr_hist.on_clicked(_on_clr_hist)
 
 
-ax_reset = plt.axes([0.04, 0.23, 0.18, 0.045])
+ax_reset = plt.axes([0.04, 0.360, 0.18, 0.04])
 btn_reset = Button(ax_reset, "Reset todo")
 
 
